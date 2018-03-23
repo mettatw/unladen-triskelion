@@ -1,0 +1,1 @@
+!%: assign('var1', 'VAR1-new')

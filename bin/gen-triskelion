@@ -1,0 +1,307 @@
+#!/usr/bin/env perl
+# Command line to generate build files
+#***************************************************************************
+#  Copyright 2014-2017, mettatw <mettatw@users.noreply.github.com>
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#***************************************************************************
+use warnings; use strict; use v5.14;
+
+use FindBin qw($Bin);
+use lib "$Bin/../local/lib/perl5";
+use lib "$Bin/../lib";
+
+use Getopt::Long qw(:config no_ignore_case bundling auto_version);
+our $VERSION = 0.1;
+
+sub getHelp {
+  my $valExit = shift // 0;
+  require "Pod/Usage.pm";
+  Pod::Usage::pod2usage(-exitval => $valExit, -verbose => 2, -output => *STDERR);
+}
+
+# Record the invoked command line
+my $cmdOriginal = join ' ', map {"'$_'"} @ARGV;
+$cmdOriginal =~ s/\$/\$\$/g;
+
+my %args = (
+  'lib' => [], 'root' => [],
+  'genbuild' => "\$TRISGENBUILD $cmdOriginal",
+  'help' => sub {getHelp(1)}
+);
+GetOptions(\%args, 'help|?',
+  'no-builtin',
+  'lib|l=s@',
+  'root|r=s@',
+  'build|b=s@',
+  'chmod|m=s@',
+  'genbuild|G=s',
+  'regentrigger|g=s@',
+  'external-prebuild=s@',
+  'skip-dependency|S=s@',
+);
+
+# Inference of missing parameters
+if (scalar @ARGV != 1) {
+  print STDERR "Error: Need exactly one output directory name\n";
+  getHelp(1);
+}
+use Cwd qw(realpath);
+my $argDir = realpath($ARGV[0]);
+
+# Function to normalize a whole array of directories
+sub normalizeArray {
+  my $pArray = shift // die;
+  for (my $i=0; $i<scalar(@{$pArray}); $i++) {
+    if (! -d $pArray->[$i]) {
+      die "Error: Specified directory $pArray->[$i] does not exist"
+    }
+    $pArray->[$i] = realpath($pArray->[$i]);
+  }
+}
+
+# ====== Start parameter reasoning ======
+
+use File::Slurp;
+use File::Find qw(find);
+use File::Spec::Functions qw(catfile catdir abs2rel);
+###use B; # for that fast hash function
+
+# Add all sort of built-ins and normalize lib and root
+if (! exists $args{'no-builtin'}) {
+  push @{$args{'lib'}}, "$Bin/../lib";
+  push @{$args{'root'}}, "$Bin/../tmpl";
+}
+normalizeArray $args{'lib'};
+normalizeArray $args{'root'};
+
+# These dirs are scanned for changes, to rebuild build.ninja
+my %mapDirsToTriggerRebuild;
+foreach my $fileTrigger (@{$args{'regentrigger'} // []}) {
+  next if (! -f "$fileTrigger");
+  $mapDirsToTriggerRebuild{"$fileTrigger"} = 1;
+}
+
+# find out which module correspond to which file
+my %mapModuleToFile;
+foreach my $dirLib (@{$args{'lib'}}) {
+  last if (! -d "$dirLib/UnladenTriskelionPlugin");
+  $mapDirsToTriggerRebuild{"$dirLib/UnladenTriskelionPlugin"} = 1;
+  find({no_chdir=>1, follow=>1, wanted=>sub {
+    return if (! -f $_);
+    my $idModule = s@.*/([^/]+)\.pm$@$1@r;
+    $mapModuleToFile{$idModule} = $_;
+  }}, "$dirLib/UnladenTriskelionPlugin");
+}
+
+# Basic parsing of build specs
+my %mapBuildRules;
+my %mapKeyToPlugins;
+foreach my $spec (@{$args{'build'} // []}) {
+  my ($identifier, $basedir, $regex, $outpat, @plugins) = split /,/, $spec;
+  if ($basedir eq '') {$basedir = '/';}
+  if ($regex eq '') {$regex = '.*';}
+  if ($outpat eq '') {$outpat = '$&';}
+  $outpat = '"' . $outpat . '"'; # for double e inside pattern replace
+
+  # plugin command line for this set of files
+  my $keyPlugin = '__' . join '___', @plugins;
+  $mapKeyToPlugins{$keyPlugin} = \@plugins;
+
+  $mapBuildRules{$identifier} = {
+    basedir => $basedir,
+    regex => $regex,
+    outpat => $outpat,
+    plugins => $keyPlugin,
+    files => {}
+  };
+} # end for each build rule
+foreach my $spec (@{$args{'chmod'} // []}) {
+  my ($identifier, $mode) = split /,/, $spec;
+  if (!exists($mapBuildRules{$identifier})) {
+    die "Cannot specify mode for build rule $identifier, it does not exist";
+  }
+  $mapBuildRules{$identifier}->{'chmod'} = $mode;
+}
+
+# Find all files from build rules
+foreach my $identifier (keys %mapBuildRules) {
+  my %rule = %{$mapBuildRules{$identifier}};
+
+  foreach my $thisRoot (@{$args{'root'}}) {
+    my $thisBase = catdir($thisRoot, $rule{'basedir'});
+    next if (! -d $thisBase);
+    find({no_chdir=>1, follow=>1, wanted=>sub {
+      #if (! -f $_ || $_ eq $fileBuilder) {
+      if (! -f $_) {
+        $mapDirsToTriggerRebuild{$_} = 1 if (-d $_);
+        return;
+      }
+      my $fnameRelative = abs2rel($_, $thisBase);
+      return if ($fnameRelative !~ m{^$rule{'regex'}$});
+      my $fnameOut = ($fnameRelative =~ s,$rule{'regex'},$rule{'outpat'},eer);
+
+      $mapBuildRules{$identifier}->{'files'}{$fnameOut} = {
+        name => catfile($rule{'basedir'}, $fnameRelative),
+        src => $_,
+      }
+    }}, catdir($thisRoot, $rule{'basedir'})); # end find function
+  } # end for each rootdir
+} # end for each build rule
+
+
+# ====== Start building ======
+
+# Write wrapper makefile, always use provided ninja
+# TODO: detect host type, now it only works on linux
+my $pathNinja = realpath("$Bin/../deps/ninja-linux-x86_64");
+use File::Path qw(make_path);
+{
+  make_path $argDir;
+  write_file catfile($argDir, 'Makefile'), <<EOF;
+NINJA = $pathNinja
+all:
+	\@\$(NINJA)
+clean:
+	\@\$(NINJA) -t clean
+_FORCE:
+	\@true
+Makefile: # Bad request made by GNU make...
+	\@true
+%:: _FORCE
+	\@\$(NINJA) "\$\@"
+EOF
+}
+
+# Collect libdir of perl modules
+my $dirListPerlLib = join ':', @{$args{'lib'}};
+my $cmdRootDir = join(' ',
+  map {"-r '" . $_ . "'"} @{$args{'root'} // []}
+);
+my $cmdSkipDep = join(' ',
+  map {"-S '" . $_ . "'"} @{$args{'skip-dependency'} // []}
+);
+
+# Write header and regen rules
+my $rslt;
+{
+  $rslt .= <<EOFNINJA;
+ninja_required_version = 1.8
+NINJABIN = $pathNinja
+TRISBIN = $Bin/triskelion
+TRISGENBUILD = $Bin/gen-triskelion
+PERL5LIB = $dirListPerlLib
+
+
+# ====== build.ninja regen ======
+
+rule regen
+  command = cd $ENV{'PWD'}; PERL5LIB='\$PERL5LIB' $args{'genbuild'}
+  generator = 1
+  description = Rebuilding ninja build file
+EOFNINJA
+}
+
+foreach my $thisDir (keys %mapDirsToTriggerRebuild) {
+  $rslt .= "build $thisDir: phony\n";
+}
+$rslt .= "build \$TRISGENBUILD: phony\n";
+$rslt .= "build build.ninja: regen " . (join ' ', keys %mapDirsToTriggerRebuild)
+. ' | $TRISGENBUILD' . "\n\n\n";
+
+# Write build rules
+$rslt .= "# ====== build rules ======\n\n";
+$rslt .= "aftercmd =\npathname =\nbuild \$TRISBIN: phony\n\n";
+foreach my $keyModule (keys %mapModuleToFile) {
+  $rslt .= "filePlugin$keyModule = $mapModuleToFile{$keyModule}\n";
+}
+foreach my $keyPlugin (keys %mapKeyToPlugins) {
+  my $param = join ' ', map {"-p $_"} @{$mapKeyToPlugins{$keyPlugin}};
+  $rslt .= <<EOFNINJA;
+rule build-$keyPlugin
+  depfile = \$out.dep
+  deps = gcc
+  command = PERL5LIB='\$PERL5LIB' \$TRISBIN $param $cmdSkipDep $cmdRootDir -n '\$pathname' -d '\$out.dep' -o '\$out' '\$in' \$aftercmd
+  description = Building \$out
+
+EOFNINJA
+}
+foreach my $identifier (keys %mapBuildRules) {
+  my %rule = %{$mapBuildRules{$identifier}};
+  foreach my $fnameOutput (keys %{$rule{'files'}}) {
+    my %mapFileInfo = %{$rule{'files'}->{$fnameOutput}};
+    my $keyPlugin = $rule{'plugins'};
+    $rslt .= "build $fnameOutput: build-$keyPlugin $mapFileInfo{'src'} \$\n"
+      . "    | \$TRISBIN " . (join ' ', map {"\$filePlugin$_"} @{$mapKeyToPlugins{$keyPlugin}}) . "\n";
+    $rslt .= "  pathname = /$mapFileInfo{'name'}\n";
+    if (exists $rule{'chmod'}) {
+      $rslt .= "  aftercmd = && chmod $rule{'chmod'} '$fnameOutput'\n"
+    }
+  }
+}
+
+# TODO: external build build.sh/Makefile/build.ninja etc.
+# TODO: write some summary to stderr if verbose
+write_file catfile($argDir, 'build.ninja'), $rslt;
+
+__END__
+
+=head1 NAME
+
+gen-triskelion - Generate ninja build file for triskelion build
+
+=head1 SYNOPSIS
+
+gen-triskelion [options] outdir
+
+=head1 OPTIONS
+
+=over 4
+
+=item --no-builtin>
+
+Do not add built-in templates
+
+=item --lib/-l E<lt>dirE<gt>
+
+(Multiple) Add dir to perl loading path
+
+=item --root/-r E<lt>dirE<gt>
+
+(Multiple) Add dir to template loading path
+
+=item --build/-b E<lt>identifier,[basedir],[regex],[outpattern]E<gt>[,plugins,...]
+
+(Multiple) Build pattern for output files
+
+=item --chmod/-m E<lt>identifier,filemodeE<gt>
+
+(Multiple) Output file mode for a given build identifier (for chmod)
+
+=item --genbuild/-G E<lt>commandE<gt>
+
+Specify the command used to generate build file
+
+=item --external-prebuild E<lt>commandE<gt>
+
+(Multiple) Specify the prebuild things to run
+
+=item --regentrigger/-g E<lt>fileE<gt>
+
+(Multiple) Changing these files will trigger a regen on build file
+
+=item --skip-dependency/-S E<lt>regexE<gt>
+
+Skip dependency check on these patterns
+
+=back

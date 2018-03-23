@@ -1,0 +1,7 @@
+requires 'Test2::Suite', '0.000072';
+requires 'Test2::Workflow', '0.000018';
+requires 'Test::Harness', '3.39';
+requires 'File::Temp', '0.2304';
+requires 'Devel::CoverReport', '0.05';
+requires 'Pod::Coverage', '0.23';
+requires 'IPC::Cmd', '1.0';

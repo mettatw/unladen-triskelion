@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+!%: block header -> {
+# This script is automatically transpiled by unladen-triskelion
+if [ -z ${BASH+x} ]; then # Need compatibility in this part, since we aren't sure being in bash yet...
+  echo "$0: you need real BASH to run this script, sh, zsh, tcsh or dash won't work" >&2
+  exit 32
+fi
+set -euo pipefail
+set +o posix # or these weird function names will not work
+!%: }
+
+tris_main_function() {
+
+!%: block front -> { }
+
+invokeIfExist __TRIS::FLOW::pre_parse "$@"
+source !.parseopts.sh
+invokeIfExist __TRIS::FLOW::pre_script "$@"
+
+##     ##    ###    #### ##    ##
+###   ###   ## ##    ##  ###   ##
+#### ####  ##   ##   ##  ####  ##
+## ### ## ##     ##  ##  ## ## ##
+##     ## #########  ##  ##  ####
+##     ## ##     ##  ##  ##   ###
+##     ## ##     ## #### ##    ##
+## The main script starts here ##
+
+!%: block body -> { }
+
+## main script ends here ##
+######## ##    ## ########
+##       ###   ## ##     ##
+##       ####  ## ##     ##
+######   ## ## ## ##     ##
+##       ##  #### ##     ##
+##       ##   ### ##     ##
+######## ##    ## ########
+!%: # Note: this is figlet's banner3 font
+
+invokeIfExist __TRIS::FLOW::post_script "$@"
+}
+
+# Some base TRIS_* environment variables
+TRIS_SCRIPTPATH_PRE="[% getPathTop() %]"
+TRIS_SCRIPTNAME="${TRIS_SCRIPTPATH_PRE##*/}"
+TRIS_VERSION="UNKNOWN" # TODO: write version
+
+!%: inc('checkargs.sh')
+
+!%: block bundle -> {
+!%: incRaw('misc.sh')
+
+!%: incRaw('flow.sh')
+!%: }
+
+!%: dumpAllIncludedShellFiles()
+
+tris_main_function "$@"
+
+!%: block footer -> {
+exit 0;
+!%: debug()
+!%: }

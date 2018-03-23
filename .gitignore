@@ -1,0 +1,6 @@
+local
+test/local
+test/build
+meta/tris.version
+
+.vstags

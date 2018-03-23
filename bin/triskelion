@@ -1,0 +1,178 @@
+#!/usr/bin/env perl
+# Command line tool to do building from templates
+#***************************************************************************
+#  Copyright 2014-2017, mettatw <mettatw@users.noreply.github.com>
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#***************************************************************************
+use warnings; use strict; use v5.14;
+
+use FindBin qw($Bin);
+use lib "$Bin/../local/lib/perl5";
+use lib "$Bin/../lib";
+
+use Getopt::Long qw(:config no_ignore_case bundling auto_version);
+our $VERSION = 0.1;
+
+sub getHelp {
+  my $valExit = shift // 0;
+  require "Pod/Usage.pm";
+  Pod::Usage::pod2usage(-exitval => $valExit, -verbose => 2, -output => *STDERR);
+}
+
+my %args = (
+  'output' => '-',
+  'root' => [],
+  'plugin' => [],
+  'help' => sub {getHelp(1)}
+);
+GetOptions(\%args, 'help|?',
+  'no-builtin',
+  'write-dependency|d=s',
+  'skip-dependency|S=s@',
+  'pathname|n=s',
+  'root|r=s@',
+  'plugin|p=s@',
+  'vars=s',
+  'output|o=s'
+);
+if ($args{'output'} eq '-') {$args{'output'} = '/dev/stdout';}
+
+# ====== The real deal starts here ======
+
+use UnladenTriskelion::Slater;
+
+# Compose module list
+my @modules;
+my %isModuleOn; # for recording which module is already in @modules
+sub insertModule {
+  my $nameModule = shift // die;
+  return if (defined $isModuleOn{$nameModule});
+
+  require 'UnladenTriskelionPlugin/' . $nameModule . ".pm";
+  my $thisModule = eval 'UnladenTriskelionPlugin::' . $nameModule . "->new()";
+
+  if ($thisModule->can('getDeps')) {
+    foreach my $nameSubModule (@{$thisModule->getDeps()}) {
+      insertModule($nameSubModule);
+    }
+  }
+
+  push @modules, $thisModule;
+  $isModuleOn{$nameModule} = 1;
+}
+insertModule('Builtin') if (! exists $args{'no-builtin'});
+foreach my $nameModule (@{$args{'plugin'}}) {
+  insertModule($nameModule);
+}
+
+# Actually initialize
+my $objSlater = UnladenTriskelion::Slater->new({
+  path => $args{'root'}
+}, \@modules);
+
+my %vars = ();
+# Import variable data from command line
+if (exists $args{'vars'}) {
+  require 'JSON/Tiny.pm';
+  %vars = %{JSON::Tiny::decode_json($args{'vars'})};
+}
+
+# See if we have input filename, if so, should only have ONE filename
+if (scalar @ARGV > 1) {
+  die "Error: don't give me more than one filenames!";
+}
+if (exists $args{'pathname'}) {
+  $vars{'_pathname'} = $args{'pathname'};
+} elsif (scalar @ARGV == 1) {
+  use File::Basename; # this is actually compile-time
+  $vars{'_pathname'} = basename($ARGV[0], []);
+}
+
+my $content = join '', <>;
+my $rslt = $objSlater->render($content, \%vars);
+
+# Write output
+{
+  if (open(my $fhWrite, '>', $args{'output'})) {
+    print $fhWrite $rslt;
+  } else {
+    die "Can't open output file $args{'output'}";
+  }
+  if (exists $args{'write-dependency'}) {
+    # In there's no reasonable output file
+    if (!(-f $args{'output'})) {
+      die "Cannot write dependency without plain output file";
+    }
+    use List::MoreUtils qw(all); # this is actually compile-time
+    my %mDeps = %{$vars{'_deps'} // {}};
+    my @aDeps = map {$mDeps{$_}}
+    sort grep { my $dep=$_;
+      all {$dep !~ m/$_/} @{$args{'skip-dependency'}}
+    } keys %mDeps;
+
+    if (open(my $fhWrite, '>', $args{'write-dependency'})) {
+      print $fhWrite "$args{'output'}: " . join(' ', @aDeps);
+    } else {
+      die "Can't open output dependnecy file $args{'write-dependency'}";
+    }
+  }
+}
+
+__END__
+
+=head1 NAME
+
+triskelion - Build document from template
+
+=head1 SYNOPSIS
+
+triskelion [options] [files]
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--no-builtin>
+
+Do not include the Builtin.pm module
+
+=item --root/-r E<lt>dirE<gt>
+
+(Multiple) Root directories for finding other files
+
+=item --plugin/-p E<lt>nameE<gt>
+
+(Multiple) Plugins to be loaded for current template
+
+=item --pathname/-n E<lt>pathE<gt>
+
+Specify path name for the current input file
+
+=item --write-dependency/-d E<lt>fileE<gt>
+
+Write makefile-style dependency list for output file, need also specify -o
+
+=item --skip-dependency/-S E<lt>regexE<gt>
+
+(Multiple) Skip writing dependencies matching this pattern
+
+=item --vars E<lt>jsonE<gt>
+
+Variables in JSON format to be added to the document
+
+=item --output/-o E<lt>fileE<gt>
+
+Output file, stdout if omitted
+
+=back

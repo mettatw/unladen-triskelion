@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Run all test scripts
+#***************************************************************************
+#  Copyright 2014-2017, mettatw <mettatw@users.noreply.github.com>
+#
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#***************************************************************************
+set -euo pipefail
+
+SCRIPTSRC="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+export PERL5LIB="$SCRIPTSRC/local/lib/perl5:$SCRIPTSRC/../local/lib/perl5:${PERL5LIB-}"
+export PATH="$SCRIPTSRC/../bin:$SCRIPTSRC/bats/bin:$SCRIPTSRC/local/bin:$PATH"
+
+coveropt=()
+runcover=
+if [[ "${1-}" == "--cover" ]]; then
+  runcover=true
+  coveropt=(--exec 'perl -MDevel::Cover=-db,cover_db,-ignore,.*local/.*,-ignore,[a-z]+-[a-z0-9]+\.pl,+ignore,CommonTest.pm,-silent,1')
+  shift
+fi
+
+cd "$SCRIPTSRC"
+if [[ "$runcover" == true ]]; then
+  cover --delete
+fi
+
+if [[ $# -gt 0 ]]; then
+  prove "${coveropt[@]+${coveropt[@]}}" "$@"
+else
+  prove "${coveropt[@]}" *.pl
+fi
+
+if [[ "$runcover" == true ]]; then
+  cover
+fi
