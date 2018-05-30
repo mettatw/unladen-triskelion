@@ -69,6 +69,40 @@ describe 'The bash module' => sub {
   # ====== User interactions ======
   # NOTE: unable to test this for now, due to some weird IPC::Cmd problems...
 
+  # ====== tmpdir-related ======
+
+  case 'should allocate tmpdir' => sub {
+    my $self = shift;
+    $self->{'input'} .= 'requestTempDir abc; echo "$abc"; if [[ -d "$abc" ]]; then echo ok; fi';
+    $self->{'like'} = qr|/tmp/tmp\.scriptmisc\.sh\.........\nok|;
+  };
+
+  case 'should allocate tmpdir for custom template' => sub {
+    my $self = shift;
+    $self->{'input'} .= 'requestTempDir abc "tmp.123.XXXXXXXX"; echo "$abc"; if [[ -d "$abc" ]]; then echo ok; fi';
+    $self->{'like'} = qr|/tmp/tmp\.123\.........\nok|;
+  };
+
+  case 'should allocate with custom TRIS_TMPROOT' => sub {
+    my $self = shift;
+    $ENV{'TRIS_TMPROOT'} = $self->{'dir'};
+    $self->{'input'} .= 'requestTempDir abc; echo "$abc"; if [[ -d "$abc" ]]; then echo ok; fi';
+    $self->{'like'} = qr|$self->{'dir'}/tmp\.scriptmisc\.sh\.........\nok|;
+  };
+
+  case 'should auto-delete tmpdir' => sub {
+    my $self = shift;
+    $self->{'input'} .= 'if [[ $TRIS_LEVEL == 1 ]]; then aaa="$(bash $0)"; if [[ ! -d "$aaa" ]]; then echo ok; fi; else requestTempDir abc; echo "$abc"; fi';
+    $self->{'answer'} = 'ok';
+  };
+
+  case 'should not auto-delete tmpdir if there is error' => sub {
+    my $self = shift;
+    $ENV{'TRIS_TMPROOT'} = $self->{'dir'};
+    $self->{'input'} .= 'if [[ $TRIS_LEVEL == 1 ]]; then aaa="$(bash $0 || true)"; if [[ -d "$aaa" ]]; then echo ok; fi; else requestTempDir abc; echo "$abc"; exit 1; fi';
+    $self->{'answer'} = 'ok';
+  };
+
   # ====== Really misc functions ======
 
   case 'should be ok to isArray' => sub {
@@ -99,6 +133,50 @@ describe 'The bash module' => sub {
     my $self = shift;
     $self->{'input'} .= 'getProperDuration 4050';
     $self->{'answer'} = '1h7m30s';
+  };
+
+  # ====== Invoke shortcuts ======
+
+  case 'should be ok with invokeIfExist' => sub {
+    my $self = shift;
+    $self->{'input'} .= 'aa() { echo abc;};invokeIfExist aa';
+    $self->{'answer'} = 'abc';
+  };
+
+  case 'should be ok with invokeIfExist if not exist' => sub {
+    my $self = shift;
+    $self->{'input'} .= 'invokeIfExist aa';
+    $self->{'answer'} = '';
+  };
+
+  case 'should be ok to invoke empty hook' => sub {
+    my $self = shift;
+    $self->{'input'} .= 'invokeTrisHook zzz';
+    $self->{'answer'} = '';
+  };
+
+  case 'should invokeIfExist with params' => sub {
+    my $self = shift;
+    $self->{'input'} .= 'aa() { echo abc$2$1;};invokeIfExist aa 15 16';
+    $self->{'answer'} = 'abc1615';
+  };
+
+  case 'should invoke hook' => sub {
+    my $self = shift;
+    $self->{'input'} .= '__TRIS::HOOK::zzz::aa() { echo AA;};invokeTrisHook zzz';
+    $self->{'answer'} = 'AA';
+  };
+
+  case 'should invoke hook in order' => sub {
+    my $self = shift;
+    $self->{'input'} .= '__TRIS::HOOK::zzz::bb() { echo BB;};__TRIS::HOOK::zzz::aa() { echo AA;};invokeTrisHook zzz';
+    $self->{'answer'} = "AA\nBB";
+  };
+
+  case 'should invoke hook with params' => sub {
+    my $self = shift;
+    $self->{'input'} .= '__TRIS::HOOK::zzz::aa() { echo AA$2$1;};invokeTrisHook zzz 15 16';
+    $self->{'answer'} = 'AA1615';
   };
 
   it 'should give correct text output' => sub {

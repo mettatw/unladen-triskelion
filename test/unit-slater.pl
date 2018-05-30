@@ -386,6 +386,27 @@ describe 'Slater modules' => sub {
     is($rslt->render('ABC'), 'ABC+[% 2 %]+[% 1 %]');
   };
 
+  package ModuleDependency {
+    sub new { return bless {}, $_[0] }; 1;
+  };
+
+  package ModuleDependent {
+    sub getDeps {
+      return ['ModuleDependency'];
+    }
+    sub new { return bless {}, $_[0] }; 1;
+  };
+
+  it 'have dependency written to the dependent module' => sub {
+    my $self = shift;
+    my $moduleDependency = ModuleDependency->new();
+    my $moduleDependent = ModuleDependent->new();
+    my $rslt = Slater->new({}, [$moduleDependency, $moduleDependent]);
+    is($rslt->{'mapModules'}{'ModuleDependent'}, $moduleDependent);
+    is($rslt->{'mapModules'}{'ModuleDependent'}{'deps'}{'ModuleDependency'}, $moduleDependency);
+  };
+
+
 }; # end test fix Slater modules
 
 done_testing;

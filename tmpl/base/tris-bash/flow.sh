@@ -1,4 +1,4 @@
-# flow.sh: basic script flows, license: Apache-2.0
+# flow.sh: basic script flows, license: Apache-2.0 # {{{
 
 # Things before parsing command line
 __TRIS::FLOW::pre_parse() {
@@ -80,3 +80,5 @@ __TRIS::FLOW::sigint() {
   printf "\e[1;31m!!forcefully killed!!\e[m" >&5
   printf "!!forcefully killed!!" >&6
 }
+
+# }}} end flow.sh

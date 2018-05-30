@@ -50,6 +50,12 @@ describe 'The bash module' => sub {
     $self->{'answer'} = "1357";
   };
 
+  case 'should be able to use another main template file' => sub {
+    my $self = shift;
+    $self->{'input'} = "\n!\@bash:/folder/new.tx\n";
+    $self->{'answer'} = "NEW TEMPLATE FILE";
+  };
+
   # ====== Unusable env detections ======
 
   case 'should not work when invoked with other sh' => sub {
@@ -105,6 +111,26 @@ describe 'The bash module' => sub {
     my $self = shift;
     $self->{'input'} .= 'if [[ "$TRIS_LEVEL" == 1 ]]; then bash $0; else echo $TRIS_LEVEL; fi';
     $self->{'answer'} = "2";
+  };
+
+  # ====== Shell import ======
+
+  case 'should be able to shell import' => sub {
+    my $self = shift;
+    $self->{'input'} .= 'cat !./folder/shellinclude';
+    $self->{'answer'} = "CONTENT";
+  };
+
+  case 'should be able to shell import and terminating with semicolon' => sub {
+    my $self = shift;
+    $self->{'input'} .= 'cat !./folder/shellinclude;';
+    $self->{'answer'} = "CONTENT";
+  };
+
+  case 'should be able to shell export' => sub {
+    my $self = shift;
+    $self->{'input'} .= '!#/folder/shellinclude;';
+    $self->{'answerLike'} = qr{_GET%.*CONTENT};
   };
 
   it 'should give correct text output' => sub {

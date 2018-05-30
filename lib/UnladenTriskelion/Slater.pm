@@ -33,7 +33,7 @@ sub new {
   bless $self, $class;
 
   # Default config and modules
-  my %methods = ();
+  my %mapMethods = ();
   my %conf = (
     path => [],
     verbose => 2,
@@ -46,12 +46,20 @@ sub new {
     warn_handler => sub { die join("\n", @_); }
   );
 
-  my @modules = @{shift // []};
-  $self->{'modules'} = \@modules;
+  my @listModules = @{shift // []};
+  my %mapModules = map {ref($_) =~ s/^UnladenTriskelionPlugin:://r => $_} @listModules;
+  $self->{'listModules'} = \@listModules;
+  $self->{'mapModules'} = \%mapModules;
 
   # Start unwrapping what modules have to given
-  foreach my $module (@modules) {
+  foreach my $module (@listModules) {
     die unless (blessed $module);
+    if ($module->can('getDeps')) { # insert dependencies into the module
+      $module->{'deps'} //= {};
+      for my $nameDep (@{$module->getDeps()}) {
+        $module->{'deps'}{$nameDep} = $mapModules{$nameDep};
+      }
+    }
     if ($module->can('mutateOptions')) {
       $module->mutateOptions(\%conf);
     }
@@ -59,7 +67,7 @@ sub new {
       $conf{'function'} = merge($conf{'function'}, $module->getFunctions());
     }
     if ($module->can('getMethods')) {
-      %methods = %{merge(\%methods, $module->getMethods())};
+      %mapMethods = %{merge(\%mapMethods, $module->getMethods())};
     }
   }
 
@@ -74,13 +82,13 @@ sub new {
 
   # Special treatment to methods, since Xslate itself cannot handle this
   if (defined $confGiven{'method'}) {
-    %methods = %{merge(\%methods, $confGiven{'method'})};
+    %mapMethods = %{merge(\%mapMethods, $confGiven{'method'})};
     delete $confGiven{'method'}; # so that is does not cause Xslate warnings
   }
   # Add method-like functions
-  $self->{'methods'} = \%methods;
-  foreach my $nameMethod (keys %methods) {
-    my $thisMethod = $methods{$nameMethod};
+  $self->{'mapMethods'} = \%mapMethods;
+  foreach my $nameMethod (keys %mapMethods) {
+    my $thisMethod = $mapMethods{$nameMethod};
     $conf{'function'}{$nameMethod} = sub {
       return $thisMethod->($self, @_);
     }
@@ -90,10 +98,10 @@ sub new {
   %conf = %{merge(\%conf, \%confGiven)};
 
   # Add pre-process handler if needed
-  if (any {$_->can('preProcessEach')}, @modules) {
+  if (any {$_->can('preProcessEach')}, @listModules) {
     $conf{'pre_process_handler'} = sub {
       my $text = shift // die;
-      foreach my $module (@modules) {
+      foreach my $module (@listModules) {
         if ($module->can('preProcessEach')) {
           $text = $module->preProcessEach($text);
         }
@@ -120,7 +128,7 @@ sub preProcess {
   my $self = shift;
   my $tmpl = shift // die;
   my $pVars = shift // {};
-  foreach my $module (@{$self->{'modules'}}) {
+  foreach my $module (@{$self->{'listModules'}}) {
     die unless (blessed $module);
     if ($module->can('preProcess')) {
       $tmpl = $module->preProcess($tmpl, $pVars);
@@ -133,7 +141,7 @@ sub postProcess {
   my $self = shift;
   my $tmpl = shift // die;
   my $pVars = shift // {};
-  foreach my $module (@{$self->{'modules'}}) {
+  foreach my $module (@{$self->{'listModules'}}) {
     die unless (blessed $module);
     if ($module->can('postProcess')) {
       $tmpl = $module->postProcess($tmpl, $pVars);

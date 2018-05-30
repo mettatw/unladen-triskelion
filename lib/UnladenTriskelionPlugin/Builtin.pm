@@ -29,6 +29,7 @@ use Try::Tiny;
 
 # Manipulate $target for relative paths
 sub eliminateDoubleDot {
+  my $self = shift;
   my $path = shift // die;
   require File::Spec;
   $path = File::Spec->canonpath($path);
@@ -50,7 +51,55 @@ sub eliminateDoubleDot {
   return $path;
 }
 
+# Make a command parser for !@xxx:xxx format
+sub parseSpecialCommand {
+  my $self = shift;
+  my $text = shift // die;
+  my $cmd = shift // die;
+  my $callback = shift // die;
+
+  # regex pattern to match the wanted command
+  my $patternCmd = qr{
+    (?: [\n\r] | ^ ) [ ]* \K    # look-behind non-capture, start with new line
+    !\@$cmd (?:                 # The command we want
+      :([^ \t\n\r;]+)        # Possible parameter
+    )?
+    [ ]* (?: (?= [\n\r] | $ ))  # look-ahead the end of command
+  }sx; # x allow comment; s treat as single line
+
+  while ($text =~ $patternCmd) {
+    my @params = map {substr($text, $-[$_], $+[$_]-$-[$_])} 1..$#-;
+    $text = $callback->($text, $-[0], $+[0], \@params);
+  }
+  return $text;
+}
+
+# Content modifier for cascading template
+sub applyCascadeTemplate {
+  my $self = shift;
+  my $text = shift // die;
+  my $posFront = shift // die;
+  my $posBack = shift // die;
+  my $template = shift // die;
+
+  my $partFront = substr($text, 0, $posFront);
+  my $partBody = substr($text, $posBack);
+  $partFront =~ s/^\s*[\n\r]//;
+  $partBody =~ s/^\s*[\n\r]//;
+  $partFront =~ s/[\n\r]\s*$//;
+  $partBody =~ s/[\n\r]\s*$//;
+
+  return "!%: cascade '$template'" . "\n"
+  . "!%: after front -> {" . "\n"
+  . $partFront . "\n"
+  . "!%: }" . "\n"
+  . "!%: after body -> {" . "\n"
+  . $partBody . "\n"
+  . "!%: }" . "\n";
+}
+
 sub getMethods {
+  my $selfModule = shift;
   return {
 
     # Assign value to a variable
@@ -112,7 +161,7 @@ sub getMethods {
       my $self = shift;
       my $target = shift // die;
       if (!($target =~ qr{^/})) {
-        $target = eliminateDoubleDot($self->{'tx'}{'function'}{'getDir'}() . '/' . $target);
+        $target = $selfModule->eliminateDoubleDot($self->{'tx'}{'function'}{'getDir'}() . '/' . $target);
       }
       return $target;
     },
@@ -135,15 +184,15 @@ sub getMethods {
     inc => sub {
       my $self = shift;
       my $target = shift // die;
-      my $isOptional = shift // 0;
+      my $default = shift // undef; # redundant, just for clarity
       my $doSkip = 0;
       try {
         $target = $self->{'tx'}{'function'}{'addDependency'}($target);
       } catch {
-        die "$_" if (!$isOptional);
+        die "$_" if (!defined $default);
         $doSkip = 1;
       };
-      return '' if ($doSkip == 1);
+      return $default if ($doSkip == 1);
 
       # Do the render work
       my $var = Text::Xslate->current_vars;
@@ -155,15 +204,15 @@ sub getMethods {
     incRaw => sub {
       my $self = shift;
       my $target = shift // die;
-      my $isOptional = shift // 0;
+      my $default = shift // undef; # redundant, just for clarity
       my $doSkip = 0;
       try {
         $target = $self->{'tx'}{'function'}{'addDependency'}($target);
       } catch {
-        die "$_" if (!$isOptional);
+        die "$_" if (!defined $default);
         $doSkip = 1;
       };
-      return '' if ($doSkip == 1);
+      return $default if ($doSkip == 1);
 
       # Do the file work
       my $var = Text::Xslate->current_vars;
@@ -186,6 +235,13 @@ sub getMethods {
       } else {
         return "\n";
       }
+    },
+
+    # print some error message and die
+    error => sub {
+      my $self = shift;
+      my $content = shift // die;
+      die $content;
     }
 
   };

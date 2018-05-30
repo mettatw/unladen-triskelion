@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 !%: block header -> {
+# This unladen-triskelion shell script template is licensed under Apache-2.0
 # This script is automatically transpiled by unladen-triskelion
 if [ -z ${BASH+x} ]; then # Need compatibility in this part, since we aren't sure being in bash yet...
   echo "$0: you need real BASH to run this script, sh, zsh, tcsh or dash won't work" >&2
@@ -41,18 +42,19 @@ invokeIfExist __TRIS::FLOW::pre_script "$@"
 invokeIfExist __TRIS::FLOW::post_script "$@"
 }
 
-# Some base TRIS_* environment variables
+!%: block basevars -> {
 TRIS_SCRIPTPATH_PRE="[% getPathTop() %]"
 TRIS_SCRIPTNAME="${TRIS_SCRIPTPATH_PRE##*/}"
-TRIS_VERSION="UNKNOWN" # TODO: write version
-
-!%: inc('checkargs.sh')
+TRIS_VERSION="[% incRaw('/meta/unladen-triskelion/version', 'unknown-version') %]"
+!%: }
 
 !%: block bundle -> {
 !%: incRaw('misc.sh')
 
 !%: incRaw('flow.sh')
 !%: }
+
+!%: inc('checkargs.sh')
 
 !%: dumpAllIncludedShellFiles()
 

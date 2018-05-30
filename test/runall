@@ -17,7 +17,7 @@
 #***************************************************************************
 set -euo pipefail
 
-SCRIPTSRC="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+SCRIPTSRC="$(readlink -f "$(dirname "${BASH_SOURCE[0]}")")"
 export PERL5LIB="$SCRIPTSRC/local/lib/perl5:$SCRIPTSRC/../local/lib/perl5:${PERL5LIB-}"
 export PATH="$SCRIPTSRC/../bin:$SCRIPTSRC/bats/bin:$SCRIPTSRC/local/bin:$PATH"
 

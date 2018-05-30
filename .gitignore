@@ -1,6 +1,4 @@
-local
-test/local
-test/build
-meta/tris.version
+local/
+tmpl/meta/unladen-triskelion/version
 
 .vstags

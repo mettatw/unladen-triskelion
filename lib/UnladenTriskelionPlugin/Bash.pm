@@ -24,15 +24,6 @@ use Text::Xslate;
 use File::Basename; # for dirname
 use Cwd qw( realpath );
 
-# regex pattern to match the wanted command
-use constant patternBeginBash => qr{
-  (?: [\n\r] | ^ ) [ ]* \K    # look-behind non-capture, start with new line
-  !\@bash (                   # The command we want
-                              # Currently, no parameters are allowed
-  )
-  [ ]* (?: (?= [\n\r] | $ ))  # look-ahead the end of command
-}sx; # x allow comment; s treat as single line
-
 # regex pattern to match the shell-invoke command
 use constant patternIncShell => qr{
   (?: \s | ^ ) \K         # look-behind non-capture, start without non-space
@@ -71,23 +62,19 @@ sub preProcessEach {
     }
   }
 
-  # TODO: expand to possibly use other main template files
-  if ($text =~ patternBeginBash) {
-    my $partFront = substr($text, 0, $-[0]);
-    my $partBody = substr($text, $+[0]);
-    $partFront =~ s/^\s*[\n\r]//;
-    $partBody =~ s/^\s*[\n\r]//;
-    $partFront =~ s/[\n\r]\s*$//;
-    $partBody =~ s/[\n\r]\s*$//;
+  $text = $self->{'deps'}{'Builtin'}->parseSpecialCommand($text, 'bash', sub {
+    my $textIn = shift // die;
+    my $posFront = shift // die;
+    my $posBack = shift // die;
+    my @listParameter = @{shift // []};
 
-    $text = "!%: cascade '/tris-bash/main.tx'" . "\n"
-    . "!%: after front -> {" . "\n"
-    . $partFront . "\n"
-    . "!%: }" . "\n"
-    . "!%: after body -> {" . "\n"
-    . $partBody . "\n"
-    . "!%: }" . "\n";
-  }
+    my $template = "/base/tris-bash/main.tx";
+    if (scalar @listParameter > 0) {
+      $template = $listParameter[0];
+    }
+
+    return $self->{'deps'}{'Builtin'}->applyCascadeTemplate($textIn, $posFront, $posBack, $template);
+  });
 
   return $text;
 }
@@ -95,36 +82,55 @@ sub preProcessEach {
 sub getMethods {
   return {
 
+    # Declare usable type checks
+    enabletype => sub {
+      my $self = shift;
+      my $name = shift // die;
+
+      my $var = Text::Xslate->current_vars;
+      $var->{'_typecheck'} //= {}; # default value
+      $var->{'_typecheck'}{$name} = 1;
+      return '';
+    },
+
     # Declare shell script options
     arg => sub {
       my $self = shift;
       my $name = shift // die;
       my $value = shift // die;
+      my %opts = %{shift // die};
       my $desc = shift // die;
-      my %opts = %{shift // {}};
 
       $opts{'required'} = 1;
-      return $self->{'tx'}{'function'}{'opt'}($name, $value, $desc, \%opts);
+      return $self->{'tx'}{'function'}{'opt'}($name, $value, \%opts, $desc);
     },
 
     opt => sub {
       my $self = shift;
       my $name = shift // die;
       my $value = shift // die;
+      my %opts = %{shift // die};
       my $desc = shift // die;
-      my %opts = %{shift // {}};
 
       $opts{'name'} = $name;
       $opts{'varname'} = ($name =~ s/-/_/rg);
       $opts{'isArray'} = ($value eq '()') ? 1 : 0;
       $opts{'value'} = $opts{'isArray'} ? '()' : "\"$value\"";
+
+      # Text-process descriptions
+      $desc =~ s/^[\n\r]+//;
+      $desc =~ s/[\n\r]+$//;
+      if ($desc =~ /^(\s+)/) {
+        my $levelIndent = length($1);
+        $desc =~ s/^\s{$levelIndent}//mg;
+      }
       $opts{'desc'} = (($desc =~ s/^/# /mrg) =~ s/\n/\n    /gr);
 
       my $var = Text::Xslate->current_vars;
       $var->{'_args'} //= {}; # default value
       $var->{'_args'}{$name} = \%opts;
 
-      return "$name=$opts{'value'} " . $opts{'desc'} . "\n";
+      return "$opts{'varname'}=$opts{'value'} " . $opts{'desc'} . "\n";
     },
 
     # Call a file in bash's process substitution, or export as bash function
@@ -139,7 +145,6 @@ sub getMethods {
       $var->{'_shelldeps'} //= {}; # default value
       $var->{'_shelldeps'}{$target} = 1;
 
-      # TODO: test whether some weird filename characters work
       if ($toExport == 0) {
         return "<(_GET\%$target)";
       } else {

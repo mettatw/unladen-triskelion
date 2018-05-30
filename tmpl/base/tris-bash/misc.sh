@@ -1,4 +1,4 @@
-# misc.sh: misc functions, license: Apache-2.0
+# misc.sh: misc functions, license: Apache-2.0 {{{
 
 isArray() {
   # This will only work with bash
@@ -71,26 +71,38 @@ requestTempDir() {
 # TODO: clear tmpdirs
 TRIS_TMPDIR=()
 
+__TRIS::HOOK::exit::zzzRemoveTmpdir() {
+  local t
+  for t in "${TRIS_TMPDIR[@]+${TRIS_TMPDIR[@]}}"; do
+    if [[ -z "$t" ]]; then continue; fi
+    if [[ "$1" == 0 || "${TRIS_TMPFORCEDELETE-}" == 1 ]]; then # success exit
+      if [[ "$t" == */tmp/* || "$t" == */.tmp/* || ( -n "${TRIS_TMPROOT-}" && "$t" == "$TRIS_TMPROOT"* ) ]]; then
+        rm -rfv "$t" >&6
+      else
+        printWarning "Not deleting tmpdir $t, it does not look like a tmpdir"
+      fi
+    else
+      printWarning "tmpdir: $t"
+    fi
+done
+}
+
 # Shortcuts to invoke things
 
-# TODO: write test
 invokeIfExist() {
   local nameFunc="$1"
   shift;
   if declare -F "$nameFunc" > /dev/null; then
-    # TODO: are we able to write tests on this parameter passing?
     "$nameFunc" "$@"
   fi
 }
 
-# TODO: write test
 invokeTrisHook() {
   local nameHook="$1"
   shift;
   local func
   for func in $(compgen -A 'function' "__TRIS::HOOK::$nameHook::"); do
     if [[ -z "$func" ]]; then continue; fi
-    # TODO: are we able to write tests on this parameter passing?
     "$func" "$@"
   done
 }
@@ -240,3 +252,5 @@ checkUserSure() {
   fi
   echo >&5
 }
+
+# }}} end misc.sh

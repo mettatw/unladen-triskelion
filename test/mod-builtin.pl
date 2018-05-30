@@ -160,8 +160,14 @@ describe 'The builtin module' => sub {
 
   case 'should be able to optional inc' => sub {
     my $self = shift;
-    $self->{'input'} = "!%: inc('should/not/exist', 1)";
+    $self->{'input'} = "!%: inc('should/not/exist', '')";
     $self->{'answer'} = "";
+  };
+
+  case 'should be able to optional inc with default text' => sub {
+    my $self = shift;
+    $self->{'input'} = "!%: inc('should/not/exist', 'UNKNOWN')";
+    $self->{'answer'} = "UNKNOWN";
   };
 
   case 'should crash if include failure' => sub {
@@ -187,8 +193,14 @@ describe 'The builtin module' => sub {
 
   case 'should be able to optional incRaw' => sub {
     my $self = shift;
-    $self->{'input'} = "!%: incRaw('should/not/exist', 1)";
+    $self->{'input'} = "!%: incRaw('should/not/exist', '')";
     $self->{'answer'} = "";
+  };
+
+  case 'should be able to optional incRaw with default text' => sub {
+    my $self = shift;
+    $self->{'input'} = "!%: incRaw('should/not/exist', 'UNKNOWN')";
+    $self->{'answer'} = "UNKNOWN";
   };
 
   case 'should crash if incRaw failure' => sub {
@@ -197,7 +209,7 @@ describe 'The builtin module' => sub {
     $self->{'exitcode'} = 2;
   };
 
-  # ====== method: debug ======
+  # ====== method: debug-related ======
 
   case 'should print only a newline with debug if no debug flag' => sub {
     my $self = shift;
@@ -216,6 +228,13 @@ describe 'The builtin module' => sub {
     my $self = shift;
     $self->{'input'} = "!%: assign('var1', '12345')\n!%: debug(1)";
     $self->{'like'} = qr|var1 => 12345|;
+  };
+
+  case 'should crash if called error' => sub {
+    my $self = shift;
+    $self->{'input'} = "!%: error('some_error_message')";
+    $self->{'exitcode'} = 2;
+    $self->{'likeErr'} = qr|some_error_message|;
   };
 
   it 'should give correct text output' => sub {

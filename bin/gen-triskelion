@@ -36,6 +36,9 @@ $cmdOriginal =~ s/\$/\$\$/g;
 
 my %args = (
   'lib' => [], 'root' => [],
+  'build' => [], 'chmod' => [],
+  'regentrigger' => [], 'skip-dependency' => [],
+  'external-prebuild' => [],
   'genbuild' => "\$TRISGENBUILD $cmdOriginal",
   'help' => sub {getHelp(1)}
 );
@@ -75,12 +78,15 @@ sub normalizeArray {
 use File::Slurp;
 use File::Find qw(find);
 use File::Spec::Functions qw(catfile catdir abs2rel);
-###use B; # for that fast hash function
 
 # Add all sort of built-ins and normalize lib and root
 if (! exists $args{'no-builtin'}) {
   push @{$args{'lib'}}, "$Bin/../lib";
   push @{$args{'root'}}, "$Bin/../tmpl";
+  push @{$args{'skip-dependency'}}, '/meta/.*';
+  if (-x "$Bin/../tmpl/meta/unladen-triskelion/.build.sh") {
+    push @{$args{'external-prebuild'}}, "cd '" . realpath("$Bin/../tmpl/meta/unladen-triskelion") . "'; ./.build.sh";
+  }
 }
 normalizeArray $args{'lib'};
 normalizeArray $args{'root'};
@@ -108,10 +114,11 @@ foreach my $dirLib (@{$args{'lib'}}) {
 my %mapBuildRules;
 my %mapKeyToPlugins;
 foreach my $spec (@{$args{'build'} // []}) {
+  die "Build specs should have commas" if ($spec !~ /,/);
   my ($identifier, $basedir, $regex, $outpat, @plugins) = split /,/, $spec;
-  if ($basedir eq '') {$basedir = '/';}
-  if ($regex eq '') {$regex = '.*';}
-  if ($outpat eq '') {$outpat = '$&';}
+  if (($basedir//'') eq '') {$basedir = '/';}
+  if (($regex//'') eq '') {$regex = '.*';}
+  if (($outpat//'') eq '') {$outpat = '$&';}
   $outpat = '"' . $outpat . '"'; # for double e inside pattern replace
 
   # plugin command line for this set of files
@@ -132,6 +139,13 @@ foreach my $spec (@{$args{'chmod'} // []}) {
     die "Cannot specify mode for build rule $identifier, it does not exist";
   }
   $mapBuildRules{$identifier}->{'chmod'} = $mode;
+}
+
+# Run pre-build external scripts once before finding files
+my @aExternalPrebuild = @{$args{'external-prebuild'} // []};
+foreach my $cmd (@aExternalPrebuild) {
+  my $rtn = system($cmd);
+  die "Error when running external-prebuild command $cmd" if ($rtn != 0);
 }
 
 # Find all files from build rules
@@ -219,6 +233,23 @@ $rslt .= "build \$TRISGENBUILD: phony\n";
 $rslt .= "build build.ninja: regen " . (join ' ', keys %mapDirsToTriggerRebuild)
 . ' | $TRISGENBUILD' . "\n\n\n";
 
+# Write pre-build things
+$rslt .= <<EOFNINJA;
+# ====== pre-build rules ======
+
+prebuildcmd =
+rule prebuild-command
+  restat = 1 # Cause ninja drop higher rev-deps if this build actually did not change anything
+  command = \$prebuildcmd
+  description = Running prebuild command number \$out
+
+EOFNINJA
+foreach my $i (0..$#aExternalPrebuild) {
+  $rslt .= "build _prebuild$i: prebuild-command\n";
+  $rslt .= "  prebuildcmd = $aExternalPrebuild[$i]\n";
+}
+$rslt .= "build _prebuildall: phony " . join(' ', map {"_prebuild$_"} 0..$#aExternalPrebuild) . "\n\n\n";
+
 # Write build rules
 $rslt .= "# ====== build rules ======\n\n";
 $rslt .= "aftercmd =\npathname =\nbuild \$TRISBIN: phony\n\n";
@@ -227,11 +258,12 @@ foreach my $keyModule (keys %mapModuleToFile) {
 }
 foreach my $keyPlugin (keys %mapKeyToPlugins) {
   my $param = join ' ', map {"-p $_"} @{$mapKeyToPlugins{$keyPlugin}};
+  $param .= ' --no-builtin' if (exists $args{'no-builtin'});
   $rslt .= <<EOFNINJA;
 rule build-$keyPlugin
   depfile = \$out.dep
   deps = gcc
-  command = PERL5LIB='\$PERL5LIB' \$TRISBIN $param $cmdSkipDep $cmdRootDir -n '\$pathname' -d '\$out.dep' -o '\$out' '\$in' \$aftercmd
+  command = PERL5LIB='\$PERL5LIB' "\$TRISBIN" $param $cmdSkipDep $cmdRootDir -n '\$pathname' -d '\$out.dep' -o '\$out' '\$in' \$aftercmd
   description = Building \$out
 
 EOFNINJA
@@ -242,7 +274,7 @@ foreach my $identifier (keys %mapBuildRules) {
     my %mapFileInfo = %{$rule{'files'}->{$fnameOutput}};
     my $keyPlugin = $rule{'plugins'};
     $rslt .= "build $fnameOutput: build-$keyPlugin $mapFileInfo{'src'} \$\n"
-      . "    | \$TRISBIN " . (join ' ', map {"\$filePlugin$_"} @{$mapKeyToPlugins{$keyPlugin}}) . "\n";
+      . "    | _prebuildall \$TRISBIN " . (join ' ', map {"\$filePlugin$_"} @{$mapKeyToPlugins{$keyPlugin}}) . "\n";
     $rslt .= "  pathname = /$mapFileInfo{'name'}\n";
     if (exists $rule{'chmod'}) {
       $rslt .= "  aftercmd = && chmod $rule{'chmod'} '$fnameOutput'\n"
@@ -250,7 +282,6 @@ foreach my $identifier (keys %mapBuildRules) {
   }
 }
 
-# TODO: external build build.sh/Makefile/build.ninja etc.
 # TODO: write some summary to stderr if verbose
 write_file catfile($argDir, 'build.ninja'), $rslt;
 
@@ -294,7 +325,7 @@ Specify the command used to generate build file
 
 =item --external-prebuild E<lt>commandE<gt>
 
-(Multiple) Specify the prebuild things to run
+(Multiple) Specify the commands to run before build
 
 =item --regentrigger/-g E<lt>fileE<gt>
 
